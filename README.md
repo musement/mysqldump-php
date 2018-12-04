@@ -203,8 +203,8 @@ $this->_dumpSettings = self::array_replace_recursive($dumpSettingsDefault, $dump
 - **exclude-tables**
   - Exclude these tables (array of table names), include all if empty, supports regexps
 - **compress**
-  - Gzip, Bzip2, None.
-  - Could be specified using the declared consts: IMysqldump\Mysqldump::GZIP, IMysqldump\Mysqldump::BZIP2 or IMysqldump\Mysqldump::NONE
+  - Gzip, Bzip2, None, Stream.
+  - Could be specified using the declared consts: IMysqldump\Mysqldump::GZIP, IMysqldump\Mysqldump::BZIP2, IMysqldump\Mysqldump::NONE or IMysqldump\Mysqldump::STREAM
 - **reset-auto-increment**
   - Removes the AUTO_INCREMENT option from the database definition
   - Useful when used with no-data, so when db is recreated, it will start from 1 instead of using an old value

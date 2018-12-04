@@ -35,9 +35,10 @@ class Mysqldump
     const MAXLINESIZE = 1000000;
 
     // List of available compression methods as constants.
-    const GZIP  = 'Gzip';
-    const BZIP2 = 'Bzip2';
-    const NONE  = 'None';
+    const GZIP   = 'Gzip';
+    const BZIP2  = 'Bzip2';
+    const NONE   = 'None';
+    const STREAM = 'Stream'; // Will save output to given stream - see \Ifsnop\Mysqldump\CompressStream
 
     // List of available connection strings.
     const UTF8    = 'utf8';
@@ -73,9 +74,12 @@ class Mysqldump
     private $triggers = array();
     private $procedures = array();
     private $events = array();
-    private $dbHandler = null;
+    /** @var \PDO */
+    private $dbHandler;
     private $dbType = "";
+    /** @var CompressBzip2|CompressGzip|CompressNone|CompressStream */
     private $compressManager;
+    /** @var TypeAdapterFactory */
     private $typeAdapter;
     private $dumpSettings = array();
     private $pdoSettings = array();
@@ -111,21 +115,28 @@ class Mysqldump
     private $tableLimits = array();
 
     /**
+     * @var \PDO|null
+     */
+    private $preparedPdo;
+
+    /**
      * Constructor of Mysqldump. Note that in the case of an SQLite database
      * connection, the filename must be in the $db parameter.
      *
-     * @param string $dsn        PDO DSN connection string
-     * @param string $user       SQL account username
-     * @param string $pass       SQL account password
-     * @param array  $dumpSettings SQL database settings
-     * @param array  $pdoSettings  PDO configured attributes
+     * @param string    $dsn        PDO DSN connection string
+     * @param string    $user       SQL account username
+     * @param string    $pass       SQL account password
+     * @param array     $dumpSettings SQL database settings
+     * @param array     $pdoSettings  PDO configured attributes
+     * @param \PDO|null $preparedPdo  If passed then it will be used instead of creating new connection
      */
     public function __construct(
         $dsn = '',
         $user = '',
         $pass = '',
         $dumpSettings = array(),
-        $pdoSettings = array()
+        $pdoSettings = array(),
+        \PDO $preparedPdo = null
     ) {
         $dumpSettingsDefault = array(
             'include-tables' => array(),
@@ -199,7 +210,9 @@ class Mysqldump
 
         // Create a new compressManager to manage compressed output
         $this->compressManager = CompressManagerFactory::create($this->dumpSettings['compress']);
-    }
+
+        $this->preparedPdo = $preparedPdo;
+     }
 
     /**
      * Destructor of Mysqldump. Unsets dbHandlers and database objects.
@@ -348,12 +361,12 @@ class Mysqldump
         try {
             switch ($this->dbType) {
                 case 'sqlite':
-                    $this->dbHandler = @new PDO("sqlite:".$this->dbName, null, null, $this->pdoSettings);
+                    $this->dbHandler = $this->preparedPdo ?: @new PDO("sqlite:".$this->dbName, null, null, $this->pdoSettings);
                     break;
                 case 'mysql':
                 case 'pgsql':
                 case 'dblib':
-                    $this->dbHandler = @new PDO(
+                    $this->dbHandler = $this->preparedPdo ?: new PDO(
                         $this->dsn,
                         $this->user,
                         $this->pass,
@@ -1254,9 +1267,10 @@ class Mysqldump
 abstract class CompressMethod
 {
     public static $enums = array(
-        "None",
-        "Gzip",
-        "Bzip2"
+        Mysqldump::NONE,
+        Mysqldump::GZIP,
+        Mysqldump::BZIP2,
+        Mysqldump::STREAM,
     );
 
     /**
@@ -1395,6 +1409,38 @@ class CompressNone extends CompressManagerFactory
     }
 }
 
+class CompressStream extends CompressNone
+{
+    /** @var resource */
+    private $fileHandler;
+
+    /**
+     * @param resource $stream
+     */
+    public function open($stream)
+    {
+        $this->fileHandler = $stream;
+        if (false === $this->fileHandler) {
+            throw new Exception("Output stream is not writable");
+        }
+
+        return true;
+    }
+
+    public function write($str)
+    {
+        if (false === ($bytesWritten = fwrite($this->fileHandler, $str))) {
+            throw new Exception("Writting to stream failed! Probably, there is no more free space left?");
+        }
+        return $bytesWritten;
+    }
+
+    public function close()
+    {
+        // Do nothing - do not close the stream here (should be closed manually)
+    }
+}
+
 /**
  * Enum with all available TypeAdapter implementations
  *
@@ -1428,6 +1474,7 @@ abstract class TypeAdapterFactory
     /**
      * @param string $c Type of database factory to create (Mysql, Sqlite,...)
      * @param PDO $dbHandler
+     * @return TypeAdapterFactory
      */
     public static function create($c, $dbHandler = null, $dumpSettings = array())
     {
